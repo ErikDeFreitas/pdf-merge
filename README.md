@@ -107,17 +107,3 @@ O `.exe` roda em máquinas sem Python. Alguns antivírus podem sinalizar execut�
 ├── gerar_exe.bat       # gera o executável com PyInstaller
 └── README.md
 ```
-
-## Roadmap
-
-- [ ] Suporte a outros tipos de mesclagem, por meio de "receitas" configuráveis (como reconhecer cada página, ordem, itens obrigatórios e nome do arquivo final)
-- [ ] Receitas em arquivo `receitas.json`, editável sem recompilar
-- [ ] Escolha do tipo de mesclagem na interface
-
-## Privacidade
-
-Todo o processamento é feito localmente. Nenhum arquivo é enviado para a internet.
-
-## Licença
-
-Defina a licença do projeto (por exemplo, MIT) antes de publicar.
