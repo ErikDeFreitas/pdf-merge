@@ -1,109 +1,79 @@
-# Mesclador de PDFs por Pastas
+# Mesclador de PDFs
 
-Ferramenta em Python que percorre uma pasta principal, junta os PDFs de cada subpasta em **um único arquivo** na ordem correta e salva o resultado na própria pasta principal.
+Junta, para cada fatura, um único PDF na ordem:
+**Fatura > CVA > CT-es > Solicitação especial > Print do Maps > Ocorrência**.
 
-Criada para o fluxo de faturamento de transportadoras: **Fatura → CVA → CT-es**.
+## Usar
 
-## O que ela faz
-
-- Percorre todas as subpastas da pasta principal (uma subpasta por fatura).
-- Identifica cada página pelo **conteúdo**, não pelo nome do arquivo:
-  - **Fatura**: páginas com "FATURA", "Dados do Sacado" ou "Relação dos Fretes"
-  - **CVA** (Controle de Veículos Alugados): páginas com "CONTROLE DE VEÍCULOS ALUGADOS"
-  - **CT-e**: páginas com "DACTE"
-- Monta o PDF final na ordem **Fatura → CVA → CT-es** (qualquer quantidade de CT-es).
-- Salva na pasta principal com o **número da fatura** como nome (ex.: `84829.pdf`).
-- Funciona com os documentos juntos num único PDF ou separados em vários arquivos.
-- Tem interface gráfica simples (tkinter) e também roda por terminal.
-
-## Estrutura de pastas
-
-Antes:
+Baixe o `MesclarPDFs.exe` da última [Release](../../releases/latest) e abra.
+Escolha a pasta principal (uma subpasta por fatura) e clique em **Mesclar tudo**.
 
 ```
 PastaPrincipal/
-├── 84829/
-│   ├── fatura_e_ctes.pdf
-│   └── cva.pdf
-└── 84830/
-    ├── fatura.pdf
-    ├── cte_1.pdf
-    ├── cte_2.pdf
-    └── cva.pdf
+    85067/
+        85067.pdf   Fatura + CT-es/NDs (mesmo nome da pasta)
+        2.pdf       CVA (obrigatório)
+        3.pdf       Solicitação especial   (EXT / EME)
+        4.pdf|png   Print do Google Maps   (EXT / EME)
+        7.pdf       Ocorrência             (ND)
 ```
 
-Depois de executar:
+Os PDFs gerados vão para `PastaPrincipal/_mesclados/`, junto com um relatório
+em `_mesclados/relatorios/`. Os arquivos originais nunca são alterados.
+
+No PDF principal, tudo antes da primeira página de CT-e (DACTE) ou Nota de
+Débito é considerado fatura. O tipo é deduzido pelos anexos presentes:
+
+| Anexos       | Tipo            |
+|--------------|-----------------|
+| nenhum       | Dedicado        |
+| 7            | Dedicado ND     |
+| 3 e 4        | EXT / EME       |
+| 3, 4 e 7     | EXT ND / EME ND |
+
+## Comportamento
+
+| Situação | Status | O que acontece |
+|---|---|---|
+| Tudo certo | OK | PDF gerado |
+| PDF extra na pasta, nome da fatura diferente da pasta, anexos fora do padrão | Aviso | PDF gerado; o detalhe diz o que conferir |
+| Sem CVA, sem CT-e/ND, começa direto no CT-e, vários PDFs candidatos | Pulada | Nada gerado; o motivo aparece na tabela e no relatório |
+| PDF escaneado (sem texto) | Pulada | Não há OCR; não dá para achar onde começam os CT-es |
+| PDF corrompido, com senha ou aberto em outro programa | Erro | Só essa pasta falha; as demais seguem |
+| Mesmo nº de fatura em duas pastas | Aviso | A segunda é salva como `NUMERO_2.pdf` |
+
+Alguns antivírus sinalizam executáveis gerados com PyInstaller; se acontecer,
+libere o arquivo.
+
+## Desenvolver
 
 ```
-PastaPrincipal/
-├── 84829.pdf      <- gerado
-├── 84830.pdf      <- gerado
-├── 84829/
-└── 84830/
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
 ```
 
-Os arquivos originais nunca são alterados.
+Modo terminal (sem janela): `python -m core "C:\caminho\PastaPrincipal"`
 
-## Requisitos
-
-- Python 3.9 ou superior
-- [pypdf](https://pypi.org/project/pypdf/)
-
-```bash
-pip install pypdf
-```
-
-## Como usar
-
-### Pela interface gráfica
-
-```bash
-python mesclar_pastas.py
-```
-
-Escolha a pasta principal e clique em **Mesclar tudo**. O andamento aparece na própria janela.
-
-### Pelo terminal
-
-```bash
-python mesclar_pastas.py "C:\caminho\PastaPrincipal"
-```
-
-### Exemplo de saída
+## Lançar uma versão
 
 ```
-[OK] 84829: 84829.pdf (1 fatura, 1 CVA, 2 CT-e = 4 páginas)
-[OK] 84830: 84830.pdf (1 fatura, 1 CVA, 5 CT-e = 7 páginas)
-[PULADA] 84831: CVA não encontrado.
-
-Concluído: 2 de 3 pastas processadas.
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
-## Gerar o executável (.exe)
+O GitHub Actions gera o `.exe` e publica na Release automaticamente
+(`.github/workflows/release.yml`). A versão exibida no app vem da tag.
 
-No Windows, com Python instalado:
+## Estrutura
 
-1. Deixe `mesclar_pastas.py` e `gerar_exe.bat` na mesma pasta.
-2. Execute o `gerar_exe.bat`.
-3. O executável será criado em `dist\MesclarPDFs.exe`.
-
-O `.exe` roda em máquinas sem Python. Alguns antivírus podem sinalizar executáveis gerados com PyInstaller; se acontecer, libere o arquivo ou a pasta.
-
-## Comportamento e limitações
-
-| Situação | O que acontece |
-|---|---|
-| Subpasta sem fatura ou sem CVA | A pasta é pulada, com aviso no log |
-| Página não reconhecida | É ignorada, com aviso informando arquivo e página |
-| PDF com erro de leitura | A pasta é pulada, com aviso |
-| Duas pastas com o mesmo nº de fatura | A segunda é salva como `NUMERO_2.pdf`, sem sobrescrever |
-| PDF escaneado (só imagem, sem texto) | Não é possível identificar as páginas (não há OCR) |
-
-## Estrutura do projeto
-
-```
-.
-├── mesclar_pastas.py   # script principal (interface + lógica)
-├── gerar_exe.bat       # gera o executável com PyInstaller
-└── README.md
-```
+| Pasta/arquivo        | Conteúdo                                         |
+|----------------------|--------------------------------------------------|
+| `core/mesclagem.py`  | Regras de negócio (sem interface)                |
+| `core/worker.py`     | Execução em segundo plano para a janela          |
+| `ui/themes.py`       | Tokens do Design System e temas Light/Dark       |
+| `ui/styles.qss`      | Estilos globais (QSS)                            |
+| `ui/components.py`   | Componentes reutilizáveis                        |
+| `main.py`            | Aplicação                                        |
+| `MesclarPDFs.spec`   | Configuração do PyInstaller                      |
