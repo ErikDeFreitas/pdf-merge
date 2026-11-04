@@ -10,9 +10,8 @@ Estrutura esperada (uma subpasta por fatura):
             4.pdf|png   <- Print do Google Maps   (EXT / EME)
             7.pdf       <- Ocorrência             (ND)
 
-Resultado:
-    PastaPrincipal/_mesclados/85067.pdf
-    PastaPrincipal/_mesclados/relatorios/relatorio_AAAA-MM-DD_HHMMSS.txt
+Resultado (na própria pasta principal):
+    PastaPrincipal/85067.pdf
 
 Ordem do PDF final:
     Fatura > CVA > CT-es > Solicitação especial > Print do Maps > Ocorrência
@@ -25,8 +24,8 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Callable
@@ -48,9 +47,6 @@ AUXILIARES = frozenset({ARQ_CVA, ARQ_SOLICITACAO, ARQ_MAPS, ARQ_OCORRENCIA})
 EXT_PDF = (".pdf",)
 EXT_IMAGEM = (".png", ".jpg", ".jpeg")
 
-PASTA_SAIDA = "_mesclados"
-PASTA_RELATORIOS = "relatorios"
-
 # Tipo da fatura, deduzido pelos arquivos opcionais presentes.
 TIPOS = {
     frozenset(): "Dedicado",
@@ -62,6 +58,14 @@ TIPOS = {
 # Textos (sem espaços, maiúsculos) que marcam o início dos CT-es/NDs.
 # Sem espaços porque alguns PDFs separam letras ("V ALOR", "D ACTE").
 MARCADORES_TRANSPORTE = ("DACTE", "NOTADEDÉBITO", "NOTADEDEBITO")
+MARCADORES_ND = ("NOTADEDÉBITO", "NOTADEDEBITO")
+
+# Nota de Débito com "FISCAL:" vazio (logo depois vem o próximo rótulo ou o fim)
+# é substituída pelo CT-e correspondente e fica FORA do PDF final.
+# O texto é comparado sem espaços nem quebras de linha, então "FISCAL:" seguido
+# de "OBSERVACOES:" na linha de baixo vira "FISCAL:OBSERVACOES:".
+FISCAL_VAZIO = re.compile(r"FISCAL:(?=OBSERVA|USU[ÁA]RIOEMISSOR|DECLARO|$)")
+NUMERO_ND = re.compile(r"N[ÚU]MERO(\d+)")
 
 A4_PT = (595, 842)  # 1 pt = 1/72 pol.
 DPI_IMAGEM = 150
@@ -85,6 +89,7 @@ class Resultado:
     saida: Path | None = None
     paginas: dict[str, int] = field(default_factory=dict)
     mensagens: list[str] = field(default_factory=list)
+    nds_desconsideradas: list[str] = field(default_factory=list)  # números das NDs sem Fiscal
 
     @property
     def gerou(self) -> bool:
@@ -101,6 +106,12 @@ class Resultado:
         partes = []
         if self.saida:
             partes.append(f"{self.saida.name}: {self.composicao()}")
+        if self.nds_desconsideradas:
+            n = len(self.nds_desconsideradas)
+            partes.append(
+                f"{n} ND sem Fiscal desconsiderada{'s' if n > 1 else ''} "
+                f"({', '.join(self.nds_desconsideradas)})"
+            )
         partes.extend(self.mensagens)
         return " · ".join(partes)
 
@@ -108,11 +119,9 @@ class Resultado:
 @dataclass
 class Execucao:
     pasta_principal: Path
-    pasta_saida: Path
     total: int
     resultados: list[Resultado] = field(default_factory=list)
     cancelada: bool = False
-    relatorio: Path | None = None
 
     def contar(self, *status: Status) -> int:
         return sum(1 for r in self.resultados if r.status in status)
@@ -231,6 +240,49 @@ def _texto(pagina) -> str:
     return "".join(texto.split()).upper()
 
 
+def nd_sem_fiscal(texto: str) -> bool:
+    """Página de Nota de Débito cujo campo "FISCAL:" (em Observações) está vazio.
+
+    `texto` é o texto da página já sem espaços e em maiúsculas (ver _texto).
+    """
+    return any(m in texto for m in MARCADORES_ND) and bool(FISCAL_VAZIO.search(texto))
+
+
+def _numero_nd(texto: str) -> str | None:
+    if not any(m in texto for m in MARCADORES_ND):
+        return None
+    m = NUMERO_ND.search(texto)
+    return m.group(1) if m else None
+
+
+def remover_nds_sem_fiscal(paginas: list) -> tuple[list, list[str]]:
+    """Tira do PDF final as NDs com "FISCAL:" vazio. Devolve (mantidas, números removidos).
+
+    Uma ND pode ter várias páginas (FL 1/2, 2/2) e só a primeira mostra o campo
+    "FISCAL:"; as demais continuam a lista de notas fiscais. Por isso a decisão é por número da ND: se ela está sem Fiscal,
+    todas as páginas com esse número saem.
+    """
+    textos = [_texto(p) for p in paginas]
+    numeros = [_numero_nd(t) for t in textos]
+
+    remover: list[str] = []
+    indices_sem_numero: set[int] = set()
+    for i, texto in enumerate(textos):
+        if nd_sem_fiscal(texto):
+            if numeros[i]:
+                if numeros[i] not in remover:
+                    remover.append(numeros[i])
+            else:
+                indices_sem_numero.add(i)
+
+    mantidas = [
+        p for i, p in enumerate(paginas)
+        if i not in indices_sem_numero and (numeros[i] is None or numeros[i] not in remover)
+    ]
+    removidas = remover + ["s/ número"] * len(indices_sem_numero)
+    return mantidas, removidas
+
+
 def separar_fatura_e_ctes(paginas: list, nome_arquivo: str) -> tuple[list, list]:
     """Tudo antes do 1º CT-e/ND é fatura; dali em diante são CT-es/NDs."""
     tem_texto = False
@@ -290,6 +342,9 @@ def mesclar_pasta(subpasta: Path, pasta_saida: Path, usados: set[str]) -> Result
     try:
         principal = _achar_principal(subpasta, avisos)
         fatura, ctes = separar_fatura_e_ctes(list(_abrir_pdf(principal).pages), principal.name)
+        ctes, r.nds_desconsideradas = remover_nds_sem_fiscal(ctes)
+        if not ctes:
+            raise _Falha(f"{principal.name} só tem Notas de Débito sem Fiscal; nenhum CT-e/ND para mesclar.")
 
         cva = _ler_auxiliar(subpasta, ARQ_CVA, EXT_PDF, avisos)
         if cva is None:
@@ -343,7 +398,7 @@ def mesclar_pasta(subpasta: Path, pasta_saida: Path, usados: set[str]) -> Result
 
 
 def listar_subpastas(pasta_principal: Path) -> list[Path]:
-    """Subpastas de faturas (ignora _mesclados e pastas ocultas/de sistema)."""
+    """Subpastas de faturas (ignora pastas que começam com _ ou .)."""
     return sorted(
         (p for p in Path(pasta_principal).iterdir() if p.is_dir() and not p.name.startswith(("_", "."))),
         key=lambda p: p.name.lower(),
@@ -363,13 +418,7 @@ def processar(
     if not subpastas:
         raise PastaInvalida("A pasta escolhida não tem subpastas de faturas.")
 
-    pasta_saida = pasta_principal / PASTA_SAIDA
-    try:
-        pasta_saida.mkdir(exist_ok=True)
-    except OSError as e:
-        raise PastaInvalida(f"Não foi possível criar a pasta de saída {pasta_saida} ({e}).")
-
-    execucao = Execucao(pasta_principal, pasta_saida, total=len(subpastas))
+    execucao = Execucao(pasta_principal, total=len(subpastas))
     usados: set[str] = set()
     for i, sub in enumerate(subpastas):
         if cancelado and cancelado():
@@ -377,45 +426,11 @@ def processar(
             break
         if ao_iniciar:
             ao_iniciar(i, len(subpastas), sub.name)
-        resultado = mesclar_pasta(sub, pasta_saida, usados)
+        resultado = mesclar_pasta(sub, pasta_principal, usados)
         execucao.resultados.append(resultado)
         if ao_concluir:
             ao_concluir(resultado)
-
-    execucao.relatorio = salvar_relatorio(execucao)
     return execucao
-
-
-def salvar_relatorio(execucao: Execucao) -> Path | None:
-    agora = datetime.now()
-    pasta = execucao.pasta_saida / PASTA_RELATORIOS
-    linhas = [
-        "MESCLADOR DE PDFs - RELATÓRIO",
-        f"Data:            {agora:%d/%m/%Y %H:%M:%S}",
-        f"Pasta principal: {execucao.pasta_principal}",
-        f"Pasta de saída:  {execucao.pasta_saida}",
-        "",
-        f"Pastas:      {execucao.total}" + ("  (CANCELADO)" if execucao.cancelada else ""),
-        f"Geradas:     {execucao.geradas}",
-        f"Com aviso:   {execucao.contar(Status.AVISO)}",
-        f"Puladas:     {execucao.contar(Status.PULADA)}",
-        f"Erros:       {execucao.contar(Status.ERRO)}",
-        "",
-        "-" * 72,
-    ]
-    for r in execucao.resultados:
-        tipo = f" ({r.tipo})" if r.tipo else ""
-        linhas.append(f"[{r.status.value.upper()}] {r.pasta}{tipo}")
-        if r.saida:
-            linhas.append(f"    {r.saida.name}: {r.composicao()} = {r.total_paginas} páginas")
-        linhas.extend(f"    - {m}" for m in r.mensagens)
-    try:
-        pasta.mkdir(parents=True, exist_ok=True)
-        destino = pasta / f"relatorio_{agora:%Y-%m-%d_%H%M%S}.txt"
-        destino.write_text("\n".join(linhas) + "\n", encoding="utf-8")
-        return destino
-    except OSError:
-        return None
 
 
 def main(argv: list[str]) -> int:
@@ -431,7 +446,5 @@ def main(argv: list[str]) -> int:
     except PastaInvalida as e:
         print(e)
         return 1
-    print(f"\nConcluído: {execucao.geradas} de {execucao.total} pastas geradas em {execucao.pasta_saida}")
-    if execucao.relatorio:
-        print(f"Relatório: {execucao.relatorio}")
+    print(f"\nConcluído: {execucao.geradas} de {execucao.total} faturas geradas em {execucao.pasta_principal}")
     return 0

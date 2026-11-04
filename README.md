@@ -18,8 +18,9 @@ PastaPrincipal/
         7.pdf       Ocorrência             (ND)
 ```
 
-Os PDFs gerados vão para `PastaPrincipal/_mesclados/`, junto com um relatório
-em `_mesclados/relatorios/`. Os arquivos originais nunca são alterados.
+Ao escolher a pasta, o app já mostra quantas faturas (subpastas) ela tem.
+Os PDFs gerados são salvos na própria pasta principal (ex.: `PastaPrincipal/85067.pdf`)
+e o resultado de cada fatura aparece na tela. Os arquivos originais nunca são alterados.
 
 No PDF principal, tudo antes da primeira página de CT-e (DACTE) ou Nota de
 Débito é considerado fatura. O tipo é deduzido pelos anexos presentes:
@@ -37,10 +38,11 @@ Débito é considerado fatura. O tipo é deduzido pelos anexos presentes:
 |---|---|---|
 | Tudo certo | OK | PDF gerado |
 | PDF extra na pasta, nome da fatura diferente da pasta, anexos fora do padrão | Aviso | PDF gerado; o detalhe diz o que conferir |
-| Sem CVA, sem CT-e/ND, começa direto no CT-e, vários PDFs candidatos | Pulada | Nada gerado; o motivo aparece na tabela e no relatório |
+| Sem CVA, sem CT-e/ND, começa direto no CT-e, vários PDFs candidatos | Pulada | Nada gerado; o motivo aparece na tabela |
 | PDF escaneado (sem texto) | Pulada | Não há OCR; não dá para achar onde começam os CT-es |
 | PDF corrompido, com senha ou aberto em outro programa | Erro | Só essa pasta falha; as demais seguem |
 | Mesmo nº de fatura em duas pastas | Aviso | A segunda é salva como `NUMERO_2.pdf` |
+| Nota de Débito com "FISCAL:" vazio (em Observações) | OK | A ND fica **fora do PDF final** (todas as páginas dela; o CT-e correspondente a substitui). O original não é alterado |
 
 Alguns antivírus sinalizam executáveis gerados com PyInstaller; se acontecer,
 libere o arquivo.

@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QThread, QUrl
+from PySide6.QtCore import Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QStackedWidget, QWidget
 
@@ -38,9 +38,8 @@ def abrir(caminho: Path) -> None:
 # Página: Mesclar PDFs
 # ---------------------------------------------------------------------------
 class MesclarPage(c.Page):
-    def __init__(self, settings: QSettings, pasta_inicial: str = ""):
+    def __init__(self, pasta_inicial: str = ""):
         super().__init__()
-        self._settings = settings
         self._thread: QThread | None = None
         self._worker: MesclarWorker | None = None
         self._execucao: mesclagem.Execucao | None = None
@@ -48,14 +47,17 @@ class MesclarPage(c.Page):
 
         # --- Origem -------------------------------------------------------
         self.input_pasta = c.Input("Selecione a pasta que contém uma subpasta por fatura")
-        self.input_pasta.setText(pasta_inicial or settings.value("ultima_pasta", ""))
         self.input_pasta.returnPressed.connect(self._iniciar)
+        # Conta as faturas assim que a pasta é escolhida ou digitada.
+        self._timer_contagem = QTimer(self, singleShot=True, interval=300)
+        self._timer_contagem.timeout.connect(self._contar_faturas)
+        self.input_pasta.textChanged.connect(self._timer_contagem.start)
         self.btn_procurar = c.Button("Procurar", "secondary", icon="folder-open")
         self.btn_procurar.clicked.connect(self._procurar)
         self.campo_pasta = c.FormField(
             "Pasta principal",
             c.hbox(self.input_pasta, self.btn_procurar, spacing=SPACE["sm"]),
-            hint=f"Os PDFs mesclados são salvos em {mesclagem.PASTA_SAIDA}, dentro da pasta principal.",
+            hint="Os PDFs mesclados são salvos na própria pasta principal.",
             target=self.input_pasta,
         )
 
@@ -64,6 +66,9 @@ class MesclarPage(c.Page):
         self.btn_cancelar = c.Button("Cancelar", "danger", icon="x")
         self.btn_cancelar.clicked.connect(self._cancelar)
         self.btn_cancelar.hide()
+        self.btn_limpar = c.Button("Limpar", "secondary", icon="eraser")
+        self.btn_limpar.setToolTip("Limpa a pasta, os indicadores e a tabela")
+        self.btn_limpar.clicked.connect(self.limpar)
         self.progresso = c.ProgressBar()
         self.progresso.hide()
         self.lbl_progresso = c.Label("", "muted")
@@ -76,11 +81,12 @@ class MesclarPage(c.Page):
         origem.add(
             self.campo_pasta,
             self.progresso,
-            c.hbox(self.btn_mesclar, self.btn_cancelar, SPACE["sm"], self.lbl_progresso, None),
+            c.hbox(self.btn_mesclar, self.btn_cancelar, self.btn_limpar, SPACE["sm"],
+                   self.lbl_progresso, None, spacing=SPACE["sm"]),
         )
 
         # --- Indicadores --------------------------------------------------
-        self.stat_total = c.StatCard("Pastas", "—", "folders", "primary")
+        self.stat_total = c.StatCard("Faturas", "—", "folders", "primary")
         self.stat_ok = c.StatCard("Geradas", "—", "check-circle", "success")
         self.stat_aviso = c.StatCard("Com aviso", "—", "alert-triangle", "warning")
         self.stat_falha = c.StatCard("Não geradas", "—", "x-circle", "danger")
@@ -99,19 +105,17 @@ class MesclarPage(c.Page):
         self.tabela.setMinimumHeight(320)
         self.tabela.cellDoubleClicked.connect(self._abrir_linha)
 
-        self.btn_saida = c.Button("Abrir pasta de saída", "secondary", "sm", icon="external-link")
-        self.btn_saida.clicked.connect(lambda: self._execucao and abrir(self._execucao.pasta_saida))
-        self.btn_relatorio = c.Button("Ver relatório", "secondary", "sm", icon="file-text")
-        self.btn_relatorio.clicked.connect(lambda: self._execucao and abrir(self._execucao.relatorio))
+        self.btn_saida = c.Button("Abrir pasta", "secondary", "sm", icon="external-link")
+        self.btn_saida.clicked.connect(lambda: self._execucao and abrir(self._execucao.pasta_principal))
         self.btn_saida.setEnabled(False)
-        self.btn_relatorio.setEnabled(False)
 
         resultado = c.Card("Resultado", "Clique duas vezes em uma linha para abrir o PDF gerado.")
-        resultado.add_header_action(self.btn_relatorio)
         resultado.add_header_action(self.btn_saida)
         resultado.add(c.hbox(self.busca, self.filtro, spacing=SPACE["sm"]), self.tabela)
 
         self.add(origem, indicadores, resultado, stretch_last=True)
+        if pasta_inicial:
+            self.input_pasta.setText(pasta_inicial)
 
     # --- Estado ---------------------------------------------------------
     @property
@@ -124,6 +128,7 @@ class MesclarPage(c.Page):
         self.input_pasta.setReadOnly(rodando)
         self.btn_cancelar.setVisible(rodando)
         self.btn_cancelar.setEnabled(True)
+        self.btn_limpar.setVisible(not rodando)
         if rodando:
             self.progresso.show()
 
@@ -133,7 +138,53 @@ class MesclarPage(c.Page):
         self.stat_aviso.set_value(n[Status.AVISO])
         self.stat_falha.set_value(n[Status.PULADA] + n[Status.ERRO])
 
+    def _zerar_resultados(self) -> None:
+        self._execucao = None
+        self._contagem = {s: 0 for s in Status}
+        self.tabela.clear_rows()
+        for stat in (self.stat_ok, self.stat_aviso, self.stat_falha):
+            stat.set_value("—")
+        self.btn_saida.setEnabled(False)
+        self.progresso.hide()
+        self.progresso.reset()
+
+    def _contar_faturas(self) -> None:
+        """Mostra quantas faturas (subpastas) a pasta tem, antes de mesclar."""
+        if self.rodando:
+            return
+        texto = self.input_pasta.text().strip().strip('"')
+        pasta = Path(texto) if texto else None
+        if pasta is None or not pasta.is_dir():
+            self.stat_total.set_value("—")
+            self.lbl_progresso.setText("")
+            return
+        self.campo_pasta.set_error(None)
+        self._zerar_resultados()
+        try:
+            total = len(mesclagem.listar_subpastas(pasta))
+        except OSError:
+            total = 0
+        self.stat_total.set_value(total)
+        if total:
+            self.lbl_progresso.setText(f"{total} fatura{'s' if total > 1 else ''} encontrada{'s' if total > 1 else ''}. Pronto para mesclar.")
+        else:
+            self.lbl_progresso.setText("Nenhuma subpasta de fatura nesta pasta.")
+
     # --- Ações ----------------------------------------------------------
+    def limpar(self) -> None:
+        if self.rodando:
+            return
+        self._timer_contagem.stop()
+        self.input_pasta.blockSignals(True)
+        self.input_pasta.clear()
+        self.input_pasta.blockSignals(False)
+        self.campo_pasta.set_error(None)
+        self._zerar_resultados()
+        self.stat_total.set_value("—")
+        self.lbl_progresso.setText("")
+        self.busca.clear()
+        self.filtro.setCurrentIndex(0)
+
     def _procurar(self) -> None:
         inicial = self.input_pasta.text() or str(Path.home())
         pasta = QFileDialog.getExistingDirectory(self, "Escolha a pasta principal", inicial)
@@ -152,15 +203,9 @@ class MesclarPage(c.Page):
             self.campo_pasta.set_error("Pasta não encontrada. Confira o caminho.")
             return
         self.campo_pasta.set_error(None)
-        self._settings.setValue("ultima_pasta", pasta)
+        self._timer_contagem.stop()
 
-        self._execucao = None
-        self._contagem = {s: 0 for s in Status}
-        self.tabela.clear_rows()
-        for stat in (self.stat_total, self.stat_ok, self.stat_aviso, self.stat_falha):
-            stat.set_value("—")
-        self.btn_saida.setEnabled(False)
-        self.btn_relatorio.setEnabled(False)
+        self._zerar_resultados()
         self.progresso.setRange(0, 0)  # indeterminado até saber o total
         self.lbl_progresso.setText("Preparando…")
         self._set_rodando(True)
@@ -225,9 +270,8 @@ class MesclarPage(c.Page):
         self._execucao = execucao
         self.progresso.setValue(self.progresso.maximum())
         self.btn_saida.setEnabled(True)
-        self.btn_relatorio.setEnabled(execucao.relatorio is not None)
         falhas = execucao.contar(Status.PULADA, Status.ERRO)
-        texto = f"{execucao.geradas} de {execucao.total} pastas geradas"
+        texto = f"{execucao.geradas} de {execucao.total} faturas geradas"
         if execucao.cancelada:
             texto = f"Cancelado: {texto}"
         elif falhas:
@@ -362,8 +406,7 @@ class MainWindow(QMainWindow):
         self._atualizar_icone_janela()
         theme_manager.changed.connect(self._atualizar_icone_janela)
 
-        settings = QSettings(ORGANIZACAO, APLICACAO)
-        self.pagina_mesclar = MesclarPage(settings, pasta_inicial)
+        self.pagina_mesclar = MesclarPage(pasta_inicial)
 
         self.sidebar = c.Sidebar("Mesclador")
         for titulo, icone, _ in PAGINAS:
