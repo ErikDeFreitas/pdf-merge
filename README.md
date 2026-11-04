@@ -79,3 +79,4 @@ O GitHub Actions gera o `.exe` e publica na Release automaticamente
 | `ui/components.py`   | Componentes reutilizáveis                        |
 | `main.py`            | Aplicação                                        |
 | `MesclarPDFs.spec`   | Configuração do PyInstaller                      |
+| `assets/`            | Ícone do executável (`MesclarPDFs.ico`)          |

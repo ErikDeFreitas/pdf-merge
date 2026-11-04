@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Build:  python -m PyInstaller --noconfirm MesclarPDFs.spec   (ou rode gerar_exe.bat)
+# Build:  python -m PyInstaller --noconfirm MesclarPDFs.spec  (use --workpath fora do OneDrive)
+# Ícone: assets/MesclarPDFs.ico = ícone "layers" do app na cor primária (#2563EB).
 
 a = Analysis(
     ['main.py'],
@@ -31,6 +32,7 @@ exe = EXE(
     a.datas,
     [],
     name='MesclarPDFs',
+    icon='assets/MesclarPDFs.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
