@@ -44,6 +44,13 @@ Débito é considerado fatura. O tipo é deduzido pelos anexos presentes:
 | Mesmo nº de fatura em duas pastas | Aviso | A segunda é salva como `NUMERO_2.pdf` |
 | Nota de Débito com "FISCAL:" vazio (em Observações) | OK | A ND fica **fora do PDF final** (todas as páginas dela; o CT-e correspondente a substitui). O original não é alterado |
 
+## Atualização automática
+
+Ao abrir, o programa consulta a última Release no GitHub. Se houver versão nova,
+aparece o aviso **Nova versão disponível**: em **Atualizar** ele baixa o novo `.exe`
+(com barra de progresso), confere o SHA-256 publicado na Release e reabre já atualizado.
+Sem internet, nada aparece. Se uma mesclagem estiver rodando, o aviso espera ela terminar.
+
 Alguns antivírus sinalizam executáveis gerados com PyInstaller; se acontecer,
 libere o arquivo.
 
@@ -74,6 +81,8 @@ O GitHub Actions gera o `.exe` e publica na Release automaticamente
 |----------------------|--------------------------------------------------|
 | `core/mesclagem.py`  | Regras de negócio (sem interface)                |
 | `core/worker.py`     | Execução em segundo plano para a janela          |
+| `core/atualizacao.py`| Busca, download e instalação de nova versão      |
+| `ui/atualizacao.py`  | Aviso de nova versão com barra de progresso      |
 | `ui/themes.py`       | Tokens do Design System e temas Light/Dark       |
 | `ui/styles.qss`      | Estilos globais (QSS)                            |
 | `ui/components.py`   | Componentes reutilizáveis                        |

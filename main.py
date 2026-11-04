@@ -14,11 +14,12 @@ from PySide6.QtCore import Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QStackedWidget, QWidget
 
-from core import mesclagem
+from core import atualizacao, mesclagem
 from core.mesclagem import Status
 from core.worker import MesclarWorker
 from ui import components as c
 from ui import icons
+from ui.atualizacao import VerificadorAtualizacao
 from ui.themes import APLICACAO, ORGANIZACAO, SIZE, SPACE, theme_manager
 from version import __version__
 
@@ -428,6 +429,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(raiz)
         self._ir_para(0)
 
+        # Procura versão nova no GitHub logo depois de abrir (só no .exe).
+        self.atualizacao = VerificadorAtualizacao(self, __version__, lambda: self.pagina_mesclar.rodando)
+        QTimer.singleShot(1500, self.atualizacao.iniciar)
+
     def _ir_para(self, indice: int) -> None:
         titulo, _, subtitulo = PAGINAS[indice]
         self.stack.setCurrentIndex(indice)
@@ -458,6 +463,7 @@ def main() -> int:
     app.setApplicationName(APLICACAO)
     app.setApplicationVersion(__version__)
     theme_manager.apply()
+    atualizacao.limpar_antigo()  # remove o .exe.old deixado pela última atualização
 
     pasta = sys.argv[1] if len(sys.argv) > 1 and Path(sys.argv[1]).is_dir() else ""
     janela = MainWindow(pasta)
