@@ -46,15 +46,26 @@ jobs:
       - name: Gerar executável
         run: python -m PyInstaller --noconfirm --clean MesclarPDFs.spec
 
+      - name: Gerar SHA-256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/MesclarPDFs.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path dist/MesclarPDFs.exe.sha256 -Value "$hash  MesclarPDFs.exe" -Encoding ascii -NoNewline
+          Write-Host "SHA-256: $hash"
+
       - name: Guardar artefato
         uses: actions/upload-artifact@v4
         with:
           name: MesclarPDFs
-          path: dist/MesclarPDFs.exe
+          path: |
+            dist/MesclarPDFs.exe
+            dist/MesclarPDFs.exe.sha256
 
       - name: Publicar Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/MesclarPDFs.exe
+          files: |
+            dist/MesclarPDFs.exe
+            dist/MesclarPDFs.exe.sha256
           generate_release_notes: true
