@@ -301,15 +301,37 @@ class FormField(QWidget):
 # Exibição
 # ---------------------------------------------------------------------------
 class Badge(QLabel):
-    """tone: neutral | primary | success | warning | danger"""
+    """tone: neutral | primary | success | warning | danger. Com clickable=True emite `clicked`."""
 
-    def __init__(self, text: str = "", tone: str = "neutral", parent=None):
+    clicked = Signal()
+
+    def __init__(self, text: str = "", tone: str = "neutral", clickable: bool = False,
+                 tooltip: str = "", parent=None):
         super().__init__(text, parent)
         self.setProperty("badge", True)
         self.setProperty("tone", tone)
+        self.setProperty("clickable", clickable)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setFixedHeight(SIZE["badge"])
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        if clickable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if tooltip:
+            self.setToolTip(tooltip)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (API Qt)
+        if (self.property("clickable") and event.button() == Qt.MouseButton.LeftButton
+                and self.rect().contains(event.position().toPoint())):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self.property("clickable"):
+            event.accept()  # não deixa a tabela tratar o clique
+            return
+        super().mousePressEvent(event)
 
     def set_tone(self, text: str, tone: str) -> None:
         self.setText(text)

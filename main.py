@@ -8,6 +8,7 @@ Uso:   python main.py                  -> abre a janela
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl
@@ -33,6 +34,70 @@ STATUS_TONE = {
 
 def abrir(caminho: Path) -> None:
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(caminho)))
+
+
+class DetalhesModal(c.Modal):
+    """Detalhes de uma fatura: o que aconteceu e quais arquivos entraram (ou não) no PDF."""
+
+    def __init__(self, r: mesclagem.Resultado, parent=None):
+        tone = STATUS_TONE[r.status]
+        icone = {"success": "check-circle", "warning": "alert-triangle"}.get(tone, "x-circle")
+        super().__init__(f"Fatura {r.pasta} · {r.status.value}", "", icone, tone, parent)
+        self._r = r
+
+        if r.caminho:  # caminho longo: abrevia no meio (o completo fica no tooltip e no "Copiar")
+            caminho = c.Label("", "muted")
+            largura = SIZE["modal"] - 2 * SPACE["xl"]
+            caminho.setText(caminho.fontMetrics().elidedText(str(r.caminho), Qt.TextElideMode.ElideMiddle, largura))
+            caminho.setToolTip(str(r.caminho))
+            self.body.addWidget(caminho)
+
+        problemas = list(r.mensagens)
+        if r.nds_desconsideradas:
+            problemas.append(f"ND sem Fiscal desconsiderada: {', '.join(r.nds_desconsideradas)}.")
+        self.body.addWidget(c.Label("O que aconteceu", "label"))
+        if r.saida:
+            self.body.addWidget(c.Label(
+                f"PDF gerado: {r.saida.name} · {r.total_paginas} páginas ({r.composicao()})", wrap=True))
+        else:
+            self.body.addWidget(c.Label("PDF não gerado.", wrap=True))
+        for msg in problemas:
+            self.body.addWidget(c.Label(f"•  {msg[:1].upper()}{msg[1:]}", wrap=True))
+        if not problemas:
+            self.body.addWidget(c.Label("Nenhum problema encontrado.", "muted"))
+
+        self.body.addSpacing(SPACE["sm"])
+        self.body.addWidget(c.Label("Arquivos da pasta", "label"))
+        for nome in r.arquivos:
+            usado = nome in r.usados
+            self.body.addLayout(c.hbox(
+                c.Icon("file-text", "text_muted", SIZE["icon_sm"]), c.Label(nome), None,
+                c.Badge("Usado" if usado else "Não usado", "success" if usado else "warning"),
+                spacing=SPACE["sm"],
+            ))
+        if not r.arquivos:
+            self.body.addWidget(c.Label("Nenhum arquivo na pasta.", "muted"))
+
+        self.btn_copiar = c.Button("Copiar detalhes", "secondary", icon="copy")
+        self.btn_copiar.setToolTip("Copia o texto completo para colar numa mensagem de suporte")
+        self.btn_copiar.clicked.connect(self._copiar)
+        self.footer.addWidget(self.btn_copiar)
+        if r.caminho:
+            btn_pasta = c.Button("Abrir pasta", "secondary", icon="folder-open")
+            btn_pasta.clicked.connect(lambda: abrir(r.caminho))
+            self.footer.addWidget(btn_pasta)
+        self.add_button("Fechar", "primary", accept=True)
+
+    def _copiar(self) -> None:
+        cabecalho = f"Mesclador de PDFs {__version__} · {datetime.now():%d/%m/%Y %H:%M}"
+        QApplication.clipboard().setText(f"{cabecalho}\n{self._r.relatorio()}")
+        self.btn_copiar.setText("Copiado!")
+        self.btn_copiar.set_icon_name("check")
+        QTimer.singleShot(2000, self._restaurar_copiar)
+
+    def _restaurar_copiar(self) -> None:
+        self.btn_copiar.setText("Copiar detalhes")
+        self.btn_copiar.set_icon_name("copy")
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +175,10 @@ class MesclarPage(c.Page):
         self.btn_saida.clicked.connect(lambda: self._execucao and abrir(self._execucao.pasta_principal))
         self.btn_saida.setEnabled(False)
 
-        resultado = c.Card("Resultado", "Clique duas vezes em uma linha para abrir o PDF gerado.")
+        resultado = c.Card(
+            "Resultado",
+            "Clique no status para ver os detalhes. Clique duas vezes na linha para abrir o PDF gerado.",
+        )
         resultado.add_header_action(self.btn_saida)
         resultado.add(c.hbox(self.busca, self.filtro, spacing=SPACE["sm"]), self.tabela)
 
@@ -260,7 +328,9 @@ class MesclarPage(c.Page):
         self._contagem[r.status] += 1
         self._atualizar_indicadores()
         self.progresso.setValue(self.progresso.value() + 1)
-        badge = c.Badge(r.status.value, STATUS_TONE[r.status])
+        badge = c.Badge(r.status.value, STATUS_TONE[r.status], clickable=True,
+                        tooltip="Clique para ver os detalhes")
+        badge.clicked.connect(lambda r=r: self._mostrar_detalhes(r))
         self.tabela.add_row(
             [badge, r.pasta, r.tipo or "—", r.total_paginas or "—", r.descricao()],
             data=r,
@@ -305,6 +375,9 @@ class MesclarPage(c.Page):
         for linha in range(self.tabela.rowCount()):
             self._filtrar_linha(linha)
 
+    def _mostrar_detalhes(self, r: mesclagem.Resultado) -> None:
+        DetalhesModal(r, self).exec()
+
     def _abrir_linha(self, linha: int, _coluna: int) -> None:
         r: mesclagem.Resultado = self.tabela.row_data(linha)
         if r and r.saida and r.saida.exists():
@@ -312,89 +385,10 @@ class MesclarPage(c.Page):
 
 
 # ---------------------------------------------------------------------------
-# Página: Componentes (vitrine do Design System)
-# ---------------------------------------------------------------------------
-class ComponentesPage(c.Page):
-    def __init__(self):
-        super().__init__()
-
-        # Botões
-        botoes = c.Card("Botões", "Variantes, tamanhos (32 / 40 / 48px) e estados.")
-        botoes.add(
-            c.hbox(c.Button("Primário"), c.Button("Secundário", "secondary"),
-                   c.Button("Excluir", "danger", icon="trash"), c.Button("Fantasma", "ghost"),
-                   c.IconButton("plus", "Adicionar"), None, spacing=SPACE["sm"]),
-            c.hbox(c.Button("Pequeno", size="sm"), c.Button("Padrão", icon="plus"),
-                   c.Button("Grande", size="lg", icon="play"), None, spacing=SPACE["sm"]),
-        )
-        desabilitados = [c.Button("Primário"), c.Button("Secundário", "secondary"),
-                         c.Button("Excluir", "danger", icon="trash")]
-        for b in desabilitados:
-            b.setEnabled(False)
-        botoes.add(c.hbox(*desabilitados, None, spacing=SPACE["sm"]))
-
-        # Formulário
-        nome = c.Input("Ex.: Transportadora Exemplo")
-        email = c.Input("nome@empresa.com.br")
-        campo_email = c.FormField("E-mail", email, "Usado para enviar o relatório.")
-        campo_email.set_error("Informe um e-mail válido.")
-        desabilitado = c.Input("Campo desabilitado")
-        desabilitado.setEnabled(False)
-        formulario = c.Card("Formulário", "Inputs 42px, foco com borda azul e estado de erro.")
-        formulario.add(
-            c.hbox(c.FormField("Nome", nome), c.FormField("Tipo", c.Select(
-                ["Dedicado", "Dedicado ND", "EXT / EME", "EXT ND / EME ND"])), spacing=SPACE["lg"]),
-            c.hbox(campo_email, c.FormField("Desabilitado", desabilitado), spacing=SPACE["lg"]),
-            c.FormField("Pesquisa", c.SearchInput("Buscar faturas")),
-            c.FormField("Observações", c.TextArea("Escreva uma observação…")),
-            c.hbox(c.Checkbox("Abrir a pasta ao terminar", True), c.Checkbox("Gerar relatório"),
-                   None, spacing=SPACE["xl"]),
-            c.hbox(None, c.Button("Cancelar", "secondary"), c.Button("Salvar"), spacing=SPACE["sm"]),
-        )
-
-        # Badges + indicadores
-        badges = c.Card("Badges")
-        badges.add(c.hbox(c.Badge("Neutro"), c.Badge("Info", "primary"), c.Badge("OK", "success"),
-                          c.Badge("Aviso", "warning"), c.Badge("Erro", "danger"), None,
-                          spacing=SPACE["sm"]))
-        stats = c.hbox(c.StatCard("Faturas", "128", "folders"),
-                       c.StatCard("Concluídas", "120", "check-circle", "success"),
-                       c.StatCard("Falhas", "8", "x-circle", "danger"), spacing=SPACE["lg"])
-
-        # Tabela
-        tabela = c.DataTable(["Status", "Fatura", "Tipo", "Páginas", "Detalhes"])
-        tabela.set_column_widths({0: 120, 1: 120, 2: 150, 3: 90})
-        for status, fatura, tipo, pags, det in [
-            ("OK", "85067", "Dedicado", 9, "85067.pdf: 2 fatura, 1 CVA, 6 CT-e"),
-            ("Aviso", "85071", "EXT / EME", 14, "PDFs ignorados: copia.pdf"),
-            ("Pulada", "85090", "—", "—", "CVA (2.pdf) não encontrado."),
-        ]:
-            tom = {"OK": "success", "Aviso": "warning"}.get(status, "danger")
-            tabela.add_row([c.Badge(status, tom), fatura, tipo, pags, det])
-        tabela.setMinimumHeight(4 * SIZE["table_row"] + 2)
-        card_tabela = c.Card("Tabela", "Linhas de 44px, seleção por linha e badges de status.")
-        card_tabela.add(tabela)
-
-        # Modais
-        modais = c.Card("Modais", "Largura padrão de 480px.")
-        b_info = c.Button("Abrir modal", "secondary", icon="info")
-        b_info.clicked.connect(lambda: c.Modal.alert(
-            self, "Processamento concluído", "120 de 128 pastas foram geradas com sucesso.", "success"))
-        b_conf = c.Button("Excluir relatório", "danger", icon="trash")
-        b_conf.clicked.connect(lambda: c.Modal.confirm(
-            self, "Excluir relatório?", "Esta ação não pode ser desfeita.",
-            confirm_text="Excluir", destructive=True))
-        modais.add(c.hbox(b_info, b_conf, None, spacing=SPACE["sm"]))
-
-        self.add(botoes, formulario, badges, stats, card_tabela, modais)
-
-
-# ---------------------------------------------------------------------------
 # Janela principal
 # ---------------------------------------------------------------------------
 PAGINAS = [
     ("Mesclar PDFs", "layers", "Junte fatura, CVA, CT-es e anexos em um único PDF por pasta."),
-    ("Componentes", "grid", "Vitrine do Design System: botões, campos, tabelas e modais."),
 ]
 
 
@@ -420,7 +414,6 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.pagina_mesclar)
-        self.stack.addWidget(ComponentesPage())
 
         raiz = QWidget()
         raiz.setObjectName("AppRoot")

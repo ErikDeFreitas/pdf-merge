@@ -373,6 +373,10 @@ QLabel[badge="true"][tone="danger"] {
     background: {{danger_subtle}};
     color: {{danger}};
 }
+/* Badge clicável (abre detalhes): sublinha no hover */
+QLabel[badge="true"][clickable="true"]:hover {
+    text-decoration: underline;
+}
 
 /* ---------- Progresso ---------- */
 QProgressBar {

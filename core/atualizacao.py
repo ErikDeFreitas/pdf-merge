@@ -20,6 +20,9 @@ from typing import Callable
 
 REPOSITORIO = "ErikDeFreitas/pdf-merge"
 API_ULTIMA = f"https://api.github.com/repos/{REPOSITORIO}/releases/latest"
+# Sem limite de consultas (a API permite só 60/hora por IP): redireciona para .../releases/tag/vX.Y.Z
+PAGINA_ULTIMA = f"https://github.com/{REPOSITORIO}/releases/latest"
+DOWNLOAD = f"https://github.com/{REPOSITORIO}/releases/download/{{tag}}/{{nome}}"
 NOME_EXE = "MesclarPDFs.exe"
 NOME_SHA = NOME_EXE + ".sha256"
 BLOCO = 64 * 1024
@@ -55,6 +58,10 @@ def _abrir(url: str, timeout: float):
 
 def buscar_ultima(timeout: float = 8) -> Release | None:
     """Última Release publicada com .exe e .sha256. None se não houver (ou sem internet)."""
+    return _pela_api(timeout) or _pelo_redirecionamento(timeout)
+
+
+def _pela_api(timeout: float) -> Release | None:
     try:
         with _abrir(API_ULTIMA, timeout) as resp:
             dados = json.load(resp)
@@ -71,6 +78,20 @@ def buscar_ultima(timeout: float = 8) -> Release | None:
         tamanho=int(exe.get("size") or 0),
         pagina=dados.get("html_url", ""),
     )
+
+
+def _pelo_redirecionamento(timeout: float) -> Release | None:
+    try:
+        with _abrir(PAGINA_ULTIMA, timeout) as resp:
+            pagina = resp.geturl()
+        tag = pagina.rstrip("/").rsplit("/tag/", 1)[1]
+        url_sha = DOWNLOAD.format(tag=tag, nome=NOME_SHA)
+        with _abrir(url_sha, timeout) as resp:  # confirma que a Release tem o .sha256
+            resp.read(1)
+    except Exception:
+        return None
+    return Release(versao=tag.lstrip("vV"), url_exe=DOWNLOAD.format(tag=tag, nome=NOME_EXE),
+                   url_sha=url_sha, tamanho=0, pagina=pagina)
 
 
 def executavel_atual() -> Path | None:

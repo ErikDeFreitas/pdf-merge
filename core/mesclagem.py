@@ -45,7 +45,7 @@ ARQ_OCORRENCIA = "7"
 AUXILIARES = frozenset({ARQ_CVA, ARQ_SOLICITACAO, ARQ_MAPS, ARQ_OCORRENCIA})
 
 EXT_PDF = (".pdf",)
-EXT_IMAGEM = (".png", ".jpg", ".jpeg")
+EXT_IMAGEM = (".png", ".jpg", ".jpeg", ".jfif")  # .jfif = JPEG (padrão de "Salvar imagem" do Chrome/Edge)
 
 # Tipo da fatura, deduzido pelos arquivos opcionais presentes.
 TIPOS = {
@@ -90,6 +90,33 @@ class Resultado:
     paginas: dict[str, int] = field(default_factory=dict)
     mensagens: list[str] = field(default_factory=list)
     nds_desconsideradas: list[str] = field(default_factory=list)  # números das NDs sem Fiscal
+    caminho: Path | None = None                                  # subpasta processada
+    arquivos: list[str] = field(default_factory=list)            # tudo o que havia na subpasta
+    usados: list[str] = field(default_factory=list)              # arquivos que entraram no PDF
+
+    @property
+    def nao_usados(self) -> list[str]:
+        return [a for a in self.arquivos if a not in self.usados]
+
+    def relatorio(self) -> str:
+        """Texto completo do resultado (para copiar e enviar ao suporte)."""
+        linhas = [
+            f"Pasta: {self.caminho or self.pasta}",
+            f"Status: {self.status.value}",
+            f"Tipo: {self.tipo or '—'}",
+            f"PDF gerado: {self.saida or 'não gerado'}",
+        ]
+        if self.paginas:
+            linhas.append(f"Páginas: {self.total_paginas} ({self.composicao()})")
+        if self.nds_desconsideradas:
+            linhas.append(f"NDs sem Fiscal desconsideradas: {', '.join(self.nds_desconsideradas)}")
+        linhas.append("Ocorrências:")
+        linhas += [f"  - {m}" for m in self.mensagens] or ["  (nenhuma)"]
+        linhas.append("Arquivos na pasta:")
+        linhas += [
+            f"  [{'usado' if a in self.usados else 'NÃO USADO'}] {a}" for a in self.arquivos
+        ] or ["  (pasta vazia)"]
+        return "\n".join(linhas)
 
     @property
     def gerou(self) -> bool:
@@ -193,7 +220,8 @@ def _achar(subpasta: Path, nome: str, extensoes: tuple[str, ...]) -> list[Path]:
     ]
 
 
-def _ler_auxiliar(subpasta: Path, nome: str, extensoes, avisos: list[str]) -> list | None:
+def _ler_auxiliar(subpasta: Path, nome: str, extensoes, avisos: list[str],
+                  usados: list[str] | None = None) -> list | None:
     """Páginas do arquivo auxiliar, ou None se ele não existir."""
     candidatos = _achar(subpasta, nome, extensoes)
     if not candidatos:
@@ -201,6 +229,8 @@ def _ler_auxiliar(subpasta: Path, nome: str, extensoes, avisos: list[str]) -> li
     arq = candidatos[0]
     if len(candidatos) > 1:
         avisos.append(f"há mais de um arquivo '{nome}' ({', '.join(c.name for c in candidatos)}); usado {arq.name}.")
+    if usados is not None:
+        usados.append(arq.name)
     if arq.suffix.lower() in EXT_IMAGEM:
         return _imagem_para_paginas(arq)
     return list(_abrir_pdf(arq).pages)
@@ -337,21 +367,26 @@ def _salvar(writer: PdfWriter, destino: Path) -> None:
 # ---------------------------------------------------------------------------
 def mesclar_pasta(subpasta: Path, pasta_saida: Path, usados: set[str]) -> Resultado:
     """Mescla os arquivos de uma subpasta. Nunca lança exceção: tudo vira Resultado."""
-    r = Resultado(pasta=subpasta.name, status=Status.OK)
+    r = Resultado(pasta=subpasta.name, status=Status.OK, caminho=subpasta)
     avisos = r.mensagens
     try:
+        r.arquivos = sorted((a.name for a in subpasta.iterdir() if a.is_file()), key=str.lower)
+    except OSError:
+        pass
+    try:
         principal = _achar_principal(subpasta, avisos)
+        r.usados.append(principal.name)
         fatura, ctes = separar_fatura_e_ctes(list(_abrir_pdf(principal).pages), principal.name)
         ctes, r.nds_desconsideradas = remover_nds_sem_fiscal(ctes)
         if not ctes:
             raise _Falha(f"{principal.name} só tem Notas de Débito sem Fiscal; nenhum CT-e/ND para mesclar.")
 
-        cva = _ler_auxiliar(subpasta, ARQ_CVA, EXT_PDF, avisos)
+        cva = _ler_auxiliar(subpasta, ARQ_CVA, EXT_PDF, avisos, r.usados)
         if cva is None:
             raise _Falha(f"CVA ({ARQ_CVA}.pdf) não encontrado.")
-        solicitacao = _ler_auxiliar(subpasta, ARQ_SOLICITACAO, EXT_PDF, avisos)
-        maps = _ler_auxiliar(subpasta, ARQ_MAPS, EXT_PDF + EXT_IMAGEM, avisos)
-        ocorrencia = _ler_auxiliar(subpasta, ARQ_OCORRENCIA, EXT_PDF, avisos)
+        solicitacao = _ler_auxiliar(subpasta, ARQ_SOLICITACAO, EXT_PDF, avisos, r.usados)
+        maps = _ler_auxiliar(subpasta, ARQ_MAPS, EXT_PDF + EXT_IMAGEM, avisos, r.usados)
+        ocorrencia = _ler_auxiliar(subpasta, ARQ_OCORRENCIA, EXT_PDF, avisos, r.usados)
 
         presentes = frozenset(
             nome for nome, pags in (
