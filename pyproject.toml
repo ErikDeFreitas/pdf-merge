@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesclador"
+dynamic = ["version"]
+description = "Mesclador de PDFs de faturas (fatura + CVA + CT-es + anexos)"
+requires-python = ">=3.11"
+dependencies = [
+    "tcm-ui>=1.2.0",
+    "pypdf>=6.16",
+    "pillow>=12.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-qt"]
+
+[project.entry-points."sistema_financeiro.modulos"]
+mesclador = "mesclador.modulo:MODULO"
+
+[tool.setuptools.dynamic]
+version = {attr = "mesclador.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -469,9 +469,9 @@ def processar(
 
 
 def main(argv: list[str]) -> int:
-    """Uso por terminal: python -m core "C:\\caminho\\PastaPrincipal" """
+    """Uso por terminal: python -m mesclador "C:\\caminho\\PastaPrincipal" """
     if len(argv) != 1:
-        print('Uso: python -m core "C:\\caminho\\PastaPrincipal"')
+        print('Uso: python -m mesclador "C:\\caminho\\PastaPrincipal"')
         return 2
     try:
         execucao = processar(

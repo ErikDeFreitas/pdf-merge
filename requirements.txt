@@ -1,4 +1,1 @@
-PySide6-Essentials==6.12.0
-pypdf==6.16.2
-pillow==12.3.0
-pyinstaller==6.22.3
+tcm-ui @ git+https://github.com/ErikDeFreitas/Tcm-ui@v1.5.0

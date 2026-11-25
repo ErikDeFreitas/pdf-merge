@@ -46,46 +46,75 @@ Débito é considerado fatura. O tipo é deduzido pelos anexos presentes:
 
 ## Atualização automática
 
-Ao abrir, o programa consulta a última Release no GitHub. Se houver versão nova,
-aparece o aviso **Nova versão disponível**: em **Atualizar** ele baixa o novo `.exe`
-(com barra de progresso), confere o SHA-256 publicado na Release e reabre já atualizado.
-Sem internet, nada aparece. Se uma mesclagem estiver rodando, o aviso espera ela terminar.
+Ao abrir, o programa consulta a última Release no GitHub. Se houver versão nova, baixa em
+segundo plano, confere o SHA-256, avisa e reinicia já atualizado. Se uma mesclagem estiver
+rodando, a atualização fica para a próxima abertura. Sem internet, nada aparece.
 
-Alguns antivírus sinalizam executáveis gerados com PyInstaller; se acontecer,
-libere o arquivo.
+Alguns antivírus sinalizam executáveis gerados com PyInstaller; se acontecer, libere o arquivo.
+
+## Linha de comando
+
+- `MesclarPDFs.exe "C:\caminho\PastaPrincipal"` abre a janela com a pasta já preenchida
+  (o mesmo vale para `python main.py "C:\caminho\PastaPrincipal"`).
+- `python -m mesclador "C:\caminho\PastaPrincipal"` mescla pelo terminal, sem janela.
 
 ## Desenvolver
 
+A interface vem da biblioteca [`tcm-ui`](https://github.com/ErikDeFreitas/Tcm-ui).
+
 ```
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python main.py
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\python main.py
 ```
 
-Modo terminal (sem janela): `python -m core "C:\caminho\PastaPrincipal"`
+Para desenvolver junto com o `tcm-ui`, instale-o editável a partir do clone vizinho
+(`.venv\Scripts\pip install -e ..\Tcm-ui`) antes do `pip install -e ".[dev]"`.
+
+Testes (não escrevem no registro nem na pasta real de dados):
+
+```
+.venv\Scripts\python -m pytest -q
+```
+
+Os dados do programa (log) ficam em `%LOCALAPPDATA%\MesclarPDFs`; defina `MESCLADOR_DADOS`
+para usar outra pasta, por exemplo em testes.
+
+## Gerar o executável
+
+```
+powershell -File build.ps1
+```
+
+Gera `dist\MesclarPDFs.exe` e `dist\MesclarPDFs.exe.sha256`.
 
 ## Lançar uma versão
 
-```
-git tag v2.1.0
-git push origin v2.1.0
-```
+1. Suba `__version__` em `src/mesclador/__init__.py` (ex.: `3.0.1`).
+2. Crie a tag igual, com `v` na frente, e envie: `git tag v3.0.1` e `git push origin v3.0.1`.
 
-O GitHub Actions gera o `.exe` e publica na Release automaticamente
-(`.github/workflows/release.yml`). A versão exibida no app vem da tag.
+O GitHub Actions (`.github/workflows/release.yml`) confere que a tag bate com `__version__`,
+roda os testes, gera o `.exe` e o `.sha256` e publica a Release com os dois arquivos.
+O `requirements.txt` fixa o `tcm-ui` numa tag (`v1.3.0`), que precisa existir no GitHub.
+
+## Módulo do Sistema Financeiro
+
+O Mesclador também é um módulo da casca Sistema Financeiro (`MODULO` em
+`src/mesclador/modulo.py`, registrado no entry point `sistema_financeiro.modulos`).
+Na casca ele aparece para quem está no grupo `SF-Mesclador`.
 
 ## Estrutura
 
-| Pasta/arquivo        | Conteúdo                                         |
-|----------------------|--------------------------------------------------|
-| `core/mesclagem.py`  | Regras de negócio (sem interface)                |
-| `core/worker.py`     | Execução em segundo plano para a janela          |
-| `core/atualizacao.py`| Busca, download e instalação de nova versão      |
-| `ui/atualizacao.py`  | Aviso de nova versão com barra de progresso      |
-| `ui/themes.py`       | Tokens do Design System e temas Light/Dark       |
-| `ui/styles.qss`      | Estilos globais (QSS)                            |
-| `ui/components.py`   | Componentes reutilizáveis                        |
-| `main.py`            | Aplicação                                        |
-| `MesclarPDFs.spec`   | Configuração do PyInstaller                      |
-| `assets/`            | Ícone do executável (`MesclarPDFs.ico`)          |
+| Pasta/arquivo                | Conteúdo                                              |
+|------------------------------|-------------------------------------------------------|
+| `src/mesclador/mesclagem.py` | Regras de negócio (sem interface)                     |
+| `src/mesclador/worker.py`    | Execução em segundo plano para a janela               |
+| `src/mesclador/tela.py`      | Tela do módulo                                        |
+| `src/mesclador/instancia.py` | Instância do módulo (casca e avulso)                  |
+| `src/mesclador/modulo.py`    | Registro do módulo (`MODULO`)                         |
+| `src/mesclador/dados.py`     | Pasta de dados                                        |
+| `main.py`                    | Ponto de entrada do `.exe` avulso                     |
+| `build.ps1`                  | Gera o `.exe` e o `.sha256`                           |
+| `assets/`                    | Ícone do executável (`MesclarPDFs.ico`)               |
+| `tests/`                     | Testes (pytest)                                       |
